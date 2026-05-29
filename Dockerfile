@@ -2,7 +2,6 @@
 FROM golang:1.24@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 AS builder
 WORKDIR /app
 COPY main.go .
-# FIX: Explicitly set GOARCH=amd64 to prevent architecture mismatches between nodes
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o main main.go
 
 # Stage 2: Final Minimal Runtime Environment
@@ -11,6 +10,6 @@ ENV PATH="/busybox:$PATH"
 WORKDIR /app
 COPY --from=builder /app/main .
 EXPOSE 4444
-HEALTHCHECK --interval=10s --timeout=2s CMD wget -qO- http://localhost:4444/ || exit 1
-# FIX: Use ENTRYPOINT instead of CMD to override the default busybox shell
+# FIX: Explicitly invoke /busybox/sh so Docker doesn't look for /bin/sh
+HEALTHCHECK --interval=10s --timeout=2s CMD ["/busybox/sh", "-c", "wget -qO- http://localhost:4444/ || exit 1"]
 ENTRYPOINT ["/app/main"]
