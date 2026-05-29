@@ -1,0 +1,14 @@
+[Unit]
+Description=My App Deployment Service
+After=network.target
+
+[Service]
+Type=simple
+User=myapp
+WorkingDirectory=/opt/myapp
+ExecStart=/opt/myapp/binary-app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
