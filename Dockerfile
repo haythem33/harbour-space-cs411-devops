@@ -1,10 +1,11 @@
-FROM golang:1.24@sha256:247fffb7158d7a68ad951dfdda7bf8af07ff4078d16abeb05bd3184effcad359 AS builder
+# Stage 1: Build Environment
+FROM golang:1.24@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 AS builder
 WORKDIR /app
 COPY main.go .
 RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 
 # Stage 2: Final Minimal Runtime Environment
-FROM gcr.io/distroless/static-debian12:debug@sha256:7985579713fb1171e707d74659c67af3605642d1c9db305304c2998a99032615
+FROM gcr.io/distroless/static-debian12:debug@sha256:46fcf1fa44d251b0944ba4b98ef4bbd266e33034e46489dbf92f680ca4917451
 WORKDIR /app
 COPY --from=builder /app/main .
 EXPOSE 4444
