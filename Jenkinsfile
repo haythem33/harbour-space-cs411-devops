@@ -37,13 +37,16 @@ pipeline {
         
         stage('Verify Health Status') {
             steps {
-                echo "Waiting 15 seconds for container to start and healthcheck to pass..."
-                sleep 15
-                sshagent(['target-ssh-key']) {
-                    sh """
-                    # FIX: Strictly match the exact JSON string "healthy", ignoring "unhealthy"
-                    ssh -o StrictHostKeyChecking=no ${TARGET_USER}@${TARGET_VM} "docker inspect --format='{{json .State.Health.Status}}' myapp | grep -q '\\\"healthy\\\"'"
-                    """
+                echo "Polling container until healthcheck passes..."
+                timeout(time: 2, unit: 'MINUTES') {
+                    retry(15) {
+                        sleep 5
+                        sshagent(['target-ssh-key']) {
+                            sh """
+                            ssh -o StrictHostKeyChecking=no ${TARGET_USER}@${TARGET_VM} "docker inspect --format='{{json .State.Health.Status}}' myapp | grep -q '\\\"healthy\\\"'"
+                            """
+                        }
+                    }
                 }
                 echo "Deployment Verified and Healthy!"
             }
