@@ -1,21 +1,39 @@
-## Hypotheses
+# Debug Track: Deployment Hypotheses and Live Troubleshooting
 
-1. **Glibc Forward Incompatibility:** The Go binary was dynamically linked on a Jenkins machine running a newer version of `glibc` (like 2.34+), and because `glibc` is backward-compatible but not forward-compatible, the binary fails when executed on an older system like Ubuntu 18.04 that has an older version. 
-2. **Missing Shared Libraries:** The target Ubuntu 18.04 VM is a minimal installation that is completely missing the required `libc.so.6` shared object file needed to execute dynamically linked binaries.
+## Part 1: Foreground-SSH vs Binding Hypotheses (Core Requirement)
+During the design of the deployment pipeline, I had to decide how to execute the binary on the target machine. Here are the hypotheses tested regarding process execution and binding:
 
-## Verification Steps
+**Hypothesis 1: The Foreground-SSH Block**
+* *Action:* Deploying the binary by running `ssh laborant@target './binary-app'`.
+* *Result:* The Jenkins pipeline hangs indefinitely. 
+* *Why:* SSH binds standard input/output to the foreground process. Jenkins waits for the SSH command to return an exit code. Because the application is a continuously running web server, the SSH session never terminates. The pipeline is permanently blocked and will eventually time out.
 
-1. **To verify Hypothesis 1:** Run `ldd --version` on the Ubuntu 18.04 VM. This command outputs the exact version of the C library installed on the machine, allowing me to confirm if it is older than the `2.34` version the binary is requesting.
-2. **To verify Hypothesis 2:** Run `ldd ./main` on the target Ubuntu 18.04 VM. This command lists all the shared libraries the binary needs, and if `libc.so.6` is entirely missing from the system, it will explicitly state "not found" next to that specific dependency.
+**Hypothesis 2: The Background/Nohup Attempt**
+* *Action:* Attempting to cheat the foreground block using `ssh laborant@target 'nohup ./binary-app &'`.
+* *Result:* The pipeline might finish, but the deployment is brittle and non-idempotent.
+* *Why:* While it detaches the process from the SSH session, there is no state management. If I run the pipeline a second time, it crashes with a "port 4444 already in use" error because the old process is still bound to the port. Furthermore, if the server reboots, the application stays dead.
 
-## The Fix
+**Hypothesis 3: The Systemd Solution (Implemented)**
+* *Action:* Copying `myapp.service` to `/etc/systemd/system/` and issuing `systemctl restart myapp.service` via SSH.
+* *Result:* The pipeline succeeds, proceeds to the health check, and the deployment is highly resilient.
+* *Why:* By handing the binary over to the system's init daemon, the SSH command simply sends a signal to systemd and immediately returns an exit code of `0`. Jenkins is freed to move to the next stage. Systemd natively binds the process to the background, manages the port safely during restarts, and provides `Restart=on-failure` resiliency.
 
-**Command:**
-`CGO_ENABLED=0 go build -o main main.go`
+---
 
-**Explanation:**
-By setting `CGO_ENABLED=0`, I am instructing the Go compiler to completely disable CGO bindings and use pure-Go implementations for its standard libraries. Instead of dynamically linking to the host machine's `glibc`, the linker produces a fully statically linked binary. This bundles all necessary dependencies directly into the executable itself, completely removing the reliance on the target machine's operating system libraries.
+## Part 2: Live Pipeline Debugging Log
+Beyond the architectural hypotheses, here is the log of real-world errors encountered in the iximiuz lab environment and how they were resolved.
 
-## The Lesson
+**Error 1: Exit Code 127 (`go: not found`)**
+* *Symptom:* The Jenkins build stage failed immediately when executing `go build -o binary-app main.go`.
+* *Diagnosis:* The Jenkins master node did not have the Go compiler installed natively. 
+* *Resolution:* Instead of refactoring the pipeline to rely on a heavy Docker container, I configured Jenkins to handle it natively. I installed the **Go Plugin** in Jenkins, configured a Global Tool named `1.24.1`, and injected a `tools { go '1.24.1' }` block into the `Jenkinsfile`.
 
-Go binaries dynamically link to the host system's C libraries by default, and while `glibc` is backward-compatible, it is not forward-compatible across older operating systems.
+**Error 2: `java.lang.NoSuchMethodError: No such DSL method 'sshagent' found`**
+* *Symptom:* The pipeline crashed at the `Deploy to Target` stage because Jenkins didn't recognize the `sshagent` wrapper.
+* *Diagnosis:* The specific Jenkins instance provisioned by the lab's seed job did not include the SSH Agent plugin out-of-the-box.
+* *Resolution:* Navigated to the Jenkins Plugin Manager, searched the "Available Plugins" tab, installed the **SSH Agent** plugin, and restarted the build. The pipeline successfully decrypted the `ed25519` key and authenticated as the `laborant` user.
+
+**Error 3: SSH Authorization Denied**
+* *Symptom:* While manually testing the lab environment, attempting to append the public key to `~/.ssh/authorized_keys` resulted in `permission denied`.
+* *Diagnosis:* The lab's environment was highly curated; the target machine already pre-authorized the pre-generated `ed25519` key.
+* *Resolution:* Skipped the authorization step, directly copied the existing private key from the target machine, and saved it in Jenkins Credentials as `target-ssh-key` without a passphrase.
