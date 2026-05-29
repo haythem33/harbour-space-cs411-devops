@@ -1,10 +1,12 @@
 pipeline {
     agent any
+
     environment {
         IMAGE_TAG = "ttl.sh/haythem33:2h" 
         TARGET_VM = "docker" 
         TARGET_USER = "laborant" 
     }
+
     stages {
         stage('Build Docker Image') {
             steps {
@@ -12,12 +14,14 @@ pipeline {
                 sh "docker build -t ${IMAGE_TAG} ."
             }
         }
+
         stage('Push to Registry') {
             steps {
-                echo "Pushing image to ttl.sh..."
+                echo "Pushing image to ttl.sh (anonymous)..."
                 sh "docker push ${IMAGE_TAG}"
             }
         }
+
         stage('Deploy to Docker VM') {
             steps {
                 echo "Deploying to ${TARGET_VM}..."
@@ -30,13 +34,15 @@ pipeline {
                 }
             }
         }
+        
         stage('Verify Health Status') {
             steps {
-                echo "Waiting 15 seconds for container to start..."
+                echo "Waiting 15 seconds for container to start and healthcheck to pass..."
                 sleep 15
                 sshagent(['target-ssh-key']) {
                     sh """
-                    ssh -o StrictHostKeyChecking=no ${TARGET_USER}@${TARGET_VM} "docker inspect --format='{{json .State.Health.Status}}' myapp | grep -q '\"healthy\"'"
+                    # FIX: Strictly match the exact JSON string "healthy", ignoring "unhealthy"
+                    ssh -o StrictHostKeyChecking=no ${TARGET_USER}@${TARGET_VM} "docker inspect --format='{{json .State.Health.Status}}' myapp | grep -q '\\\"healthy\\\"'"
                     """
                 }
                 echo "Deployment Verified and Healthy!"
