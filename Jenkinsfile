@@ -1,6 +1,8 @@
 pipeline {
     agent any
-    
+    tools {
+        go 'go-1.24.1' 
+    }
     environment {
         TARGET_HOST = 'target'
         APP_DIR = '/opt/myapp'
